@@ -2,6 +2,18 @@ package canard
 
 import "unsafe"
 
+type internalRxSession struct {
+	txTimestamp      microsecond
+	totalPayloadSize int
+	payloadSize      int
+	payload          []byte
+	crc              CRC
+	tid              TID
+	// Redundant Transport Index
+	rti    uint8
+	toggle bool
+}
+
 func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 	switch {
 	case frame == nil || out == nil:
@@ -43,7 +55,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 	// Tail byte parsing.
 	// No violation of MISRA.
 	tail := frame.payload[out.payloadSize-1]
-	out.tid = TransferID(tail & TRANSFER_ID_MAX)
+	out.tid = TID(tail & TRANSFER_ID_MAX)
 	out.txStart = (tail & TAIL_START_OF_TRANSFER) != 0
 	out.txEnd = (tail & TAIL_END_OF_TRANSFER) != 0
 	out.toggle = (tail & TAIL_TOGGLE) != 0
@@ -64,7 +76,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 	return nil
 }
 
-func (rxs *InternalRxSession) reset(txid TransferID, rti uint8) {
+func (rxs *internalRxSession) reset(txid TID, rti uint8) {
 	rxs.totalPayloadSize = 0
 	rxs.payload = rxs.payload[:0]
 	rxs.crc = CRC_INITIAL

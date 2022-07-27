@@ -37,17 +37,19 @@ type Frame struct {
 type NodeID uint8
 
 type PortID uint32
-type TransferID uint8
+
+// Transfer ID
+type TID uint8
 
 /// High-level transport frame model.
 type RxFrameModel struct {
 	timestamp   microsecond
 	prority     Priority
-	txKind      uint8
+	txKind      TxKind
 	port        PortID
 	srcNode     NodeID
 	dstNode     NodeID
-	tid         TransferID
+	tid         TID
 	txStart     bool
 	txEnd       bool
 	toggle      bool
@@ -61,25 +63,13 @@ type RxSub struct {
 	tidTimeout microsecond
 	extent     int
 	port       PortID
-
-	userRef interface{}
-
-	sessions [NODE_ID_MAX]*InternalRxSession
-}
-
-type InternalRxSession struct {
-	txTimestamp      microsecond
-	totalPayloadSize int
-	payloadSize      int
-	payload          []byte
-	crc              TxCRC
-	tid              TransferID
-	// Redundant Transport Index
-	rti    uint8
-	toggle bool
+	userRef    interface{}
+	sessions   [NODE_ID_MAX]*internalRxSession
 }
 
 type TxMetadata struct {
+	priority Priority
+	txkind   TxKind
 }
 
 type RxTransfer struct {
@@ -90,8 +80,6 @@ type RxTransfer struct {
 	payloadSize int
 	payload     []byte
 }
-
-type Priority uint8
 
 func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, outTx *RxTransfer, outSub *RxSub) error {
 	switch {
@@ -140,13 +128,15 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 		return ErrBadTransferID
 	case NodeIDUnset != frame.dstNode && ins.NodeID != frame.dstNode:
 		return ErrBadDstAddr
+	case frame.srcNode > NODE_ID_MAX && frame.srcNode != NodeIDUnset:
+		return ErrInvalidNodeID
 	}
 
 	if frame.srcNode <= NODE_ID_MAX {
 		// If such session does not exist, create it. This only makes sense if this is the first frame of a
 		// transfer, otherwise, we won't be able to receive the transfer anyway so we don't bother.
 		if sub.sessions[frame.srcNode] == nil && frame.txStart {
-			sub.sessions[frame.srcNode] = &InternalRxSession{
+			sub.sessions[frame.srcNode] = &internalRxSession{
 				txTimestamp: frame.timestamp,
 				crc:         CRC_INITIAL,
 				tid:         frame.tid,
@@ -159,9 +149,6 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 				rti, sub.tidTimeout, sub.extent, outTx)
 		}
 	} else {
-		if frame.srcNode != NodeIDUnset {
-			return ErrInvalidNodeID
-		}
 		// Anonymous transfer. Must allocate according to libcanard.
 		payloadSize := min(sub.extent, frame.payloadSize)
 		payload := make([]byte, payloadSize)
@@ -174,7 +161,7 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 	return nil
 }
 
-func (ins *Instance) rxSessionUpdate(rxs *InternalRxSession, frame *RxFrameModel, rti uint8, txIdTimeout microsecond, extent int, outTx *RxTransfer) error {
+func (ins *Instance) rxSessionUpdate(rxs *internalRxSession, frame *RxFrameModel, rti uint8, txIdTimeout microsecond, extent int, outTx *RxTransfer) error {
 	switch {
 	case rxs == nil || frame == nil || outTx == nil:
 		return ErrInvalidArgument
@@ -204,7 +191,7 @@ func (ins *Instance) rxSessionUpdate(rxs *InternalRxSession, frame *RxFrameModel
 	return errTODO
 }
 
-func rxComputeTransferIDDifference(a, b TransferID) uint8 {
+func rxComputeTransferIDDifference(a, b TID) uint8 {
 	diff := int16(a) - int16(b)
 	if diff < 0 {
 		diff += 1 << TRANSFER_ID_BIT_LENGTH
@@ -212,7 +199,7 @@ func rxComputeTransferIDDifference(a, b TransferID) uint8 {
 	return uint8(diff)
 }
 
-func (ins *Instance) rxSessionAcceptFrame(rxs *InternalRxSession, frame *RxFrameModel, extent int, outTx *RxTransfer) error {
+func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *RxFrameModel, extent int, outTx *RxTransfer) error {
 	switch {
 	case rxs == nil || frame == nil || outTx == nil:
 		return ErrInvalidArgument
@@ -233,7 +220,7 @@ func (ins *Instance) rxSessionAcceptFrame(rxs *InternalRxSession, frame *RxFrame
 	return nil
 }
 
-func (ins *Instance) rxSessionWritePayload(rxs *InternalRxSession, extent, payloadSize int, payload []byte) error {
+func (ins *Instance) rxSessionWritePayload(rxs *internalRxSession, extent, payloadSize int, payload []byte) error {
 	switch {
 	case rxs == nil:
 		return ErrInvalidArgument

@@ -1,5 +1,31 @@
 package canard
 
+const (
+	NodeIDUnset = 255
+)
+
+type TxKind uint8
+
+const (
+	TxKindMessage  TxKind = iota ///< Multicast, from publisher to all subscribers.
+	TxKindResponse               ///< Point-to-point, from server to client.
+	TxKindRequest                ///< Point-to-point, from client to server.
+)
+
+type Priority uint8
+
+// Transfer priority level mnemonics per the recommendations given in the Cyphal Specification.
+const (
+	PriorityExceptional Priority = iota
+	PriorityImmediate
+	PriorityFast
+	PriorityHigh
+	PriorityNominal // Nominal priority level should be the default.
+	PriorityLow
+	PrioritySlow
+	PriorityOptional
+)
+
 /// Parameter ranges are inclusive; the lower bound is zero for all. See Cyphal/CAN Specification for background.
 const (
 	SUBJECT_ID_MAX         = 8191
@@ -19,32 +45,10 @@ const (
 )
 
 const (
-	TxKindMessage  = 0 ///< Multicast, from publisher to all subscribers.
-	TxKindResponse = 1 ///< Point-to-point, from server to client.
-	TxKindRequest  = 2 ///< Point-to-point, from client to server.
-)
-
-const (
-	NodeIDUnset = 255
-)
-
-const (
 	TAIL_START_OF_TRANSFER         = 128
 	TAIL_END_OF_TRANSFER           = 64
 	TAIL_TOGGLE                    = 32
 	MFT_NON_LAST_FRAME_PAYLOAD_MIN = 7
-)
-
-// Transfer priority level mnemonics per the recommendations given in the Cyphal Specification.
-const (
-	PriorityExceptional = iota
-	PriorityImmediate
-	PriorityFast
-	PriorityHigh
-	PriorityNominal // Nominal priority level should be the default.
-	PriorityLow
-	PrioritySlow
-	PriorityOptional
 )
 
 const (
