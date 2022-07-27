@@ -1,5 +1,11 @@
 package canard
 
+const (
+	CRC_INITIAL    = 0xFFFF
+	CRC_RESIDUE    = 0x0000
+	CRC_SIZE_BYTES = 2
+)
+
 type TxCRC uint16
 
 func (c TxCRC) Add(data []byte) TxCRC {
