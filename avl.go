@@ -1,12 +1,16 @@
 package canard
 
+// This package defines AVL tree
+// data structure and algorithms.
+
+// TreeNode is a node of an AVL tree.
 type TreeNode struct {
 	up *TreeNode
 	lr [2]*TreeNode
 	bf int8
 }
 
-func search(root **TreeNode, userRef any, predicate func(any, *TreeNode) int, factory func(any) *TreeNode) (*TreeNode, error) {
+func search(root **TreeNode, userRef any, predicate func(any, *TreeNode) int8, factory func(any) *TreeNode) (*TreeNode, error) {
 	var out *TreeNode
 	switch {
 	case root == nil || predicate == nil:
@@ -138,12 +142,109 @@ func rotate(x *TreeNode, r bool) {
 	z.lr[b2i(r)] = x
 }
 
+func findExtremum(root *TreeNode, max bool) *TreeNode {
+	var result *TreeNode
+	r := b2i(max)
+	c := root
+	for c != nil {
+		result = c
+		c = c.lr[r]
+	}
+	return result
+}
+
+func remove(root **TreeNode, node *TreeNode) {
+	if root == nil || node == nil {
+		return
+	}
+	if *root == nil || !(node.up != nil || node == *root) {
+		panic(ErrInvalidArgument)
+	}
+	var p *TreeNode // The lowest parent node that suffered a shortening of its subtree.
+	r := b2i(false) // Which side of the above was shortened.
+	// The first step is to update the topology and remember the node where to start the retracing from later.
+	// Balancing is not performed yet so we may end up with an unbalanced tree.
+	if node.lr[0] != nil && node.lr[1] != nil {
+		re := findExtremum(node.lr[1], false)
+		if re == nil || re.lr[0] == nil || re.up == nil {
+			panic("invalid re extremum")
+		}
+		re.bf = node.bf
+		re.lr[0] = node.lr[0]
+		re.lr[0].up = re
+		if re.up != node {
+			p = re.up // Retracing starts with the ex-parent of our replacement node.
+			if p.lr[0] != re {
+				panic("todo bad re")
+			}
+			p.lr[0] = re.lr[1] // Reducing the height of the left subtree here.
+			if p.lr[0] != nil {
+				p.lr[0].up = p
+			}
+			re.lr[1] = node.lr[1]
+			re.lr[1].up = re
+			r = 0
+		} else {
+			// In this case, we are reducing the height of the right subtree, so r=1.
+			p = re // Retracing starts with the replacement node itself as we are deleting its parent.
+			r = 1  // The right child of the replacement node remains the same so we don't bother relinking it.
+		}
+		re.up = node.up
+		if re.up != nil {
+			re.up.lr[b2i(re.up.lr[1] == node)] = re // Replace link in the parent of node.
+		} else {
+			*root = re
+		}
+	} else {
+		p = node.up
+		rr := b2i(node.lr[1] != nil)
+		if node.lr[rr] != nil {
+			node.lr[rr].up = p
+		}
+		if p != nil {
+			r = b2i(p.lr[1] == node)
+			p.lr[r] = node.lr[rr]
+			if p.lr[r] != nil {
+				p.lr[r].up = p
+			}
+		} else {
+			*root = node.lr[rr]
+		}
+	}
+	if p == nil {
+		return // work is done.
+	}
+	// Now that the topology is updated, perform the retracing to restore balance. We climb up adjusting the
+	// balance factors until we reach the root or a parent whose balance factor becomes plus/minus one, which
+	// means that that parent was able to absorb the balance delta; in other words, the height of the outer
+	// subtree is unchanged, so upper balance factors shall be kept unchanged.
+	var c *TreeNode
+	for {
+		c = adjustBalance(p, !(r == 1))
+		p = c.up
+		if c.bf != 0 || p == nil {
+			// Reached the root or the height difference is absorbed by c.
+			break
+		}
+		r = b2i(p.lr[1] == c)
+	}
+	if p == nil {
+		if c == nil {
+			panic("nil c at end of remove")
+		}
+		*root = c
+	}
+}
+
+//go:inline
 func bsign(b bool) int8 {
 	if b {
 		return 1
 	}
 	return -1
 }
+
+//go:inline
 func b2i(b bool) int {
 	if b {
 		return 1
