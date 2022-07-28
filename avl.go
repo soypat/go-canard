@@ -236,6 +236,11 @@ func remove(root **TreeNode, node *TreeNode) {
 	}
 }
 
+/// Used for inserting new items into AVL trees.
+func avlTrivialFactory(userRef any) *TreeNode {
+	return userRef.(*TreeNode)
+}
+
 //go:inline
 func bsign(b bool) int8 {
 	if b {

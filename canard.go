@@ -6,7 +6,7 @@ import (
 )
 
 type Instance struct {
-	userRef interface{}
+	userRef any
 	NodeID  NodeID
 	// There are 3 kinds of transfer modes.
 	rxSub [3]*TreeNode
@@ -21,7 +21,40 @@ type TxItem struct {
 	payloadBuffer [_MTU]byte
 }
 
+func newTxItem(deadline microsecond, size int, extendedCANID uint32) *TxItem {
+	tqi := &TxItem{
+		base: TxQueueItem{
+			deadline: deadline,
+			frame: Frame{
+				payloadSize:   size,
+				extendedCANID: extendedCANID,
+			},
+		},
+	}
+	tqi.base.frame.payload = tqi.payloadBuffer[:]
+	return tqi
+}
+
+type TxQueue struct {
+	// The maximum number of frames this queue is allowed to contain. An attempt to push more will fail with an
+	// out-of-memory error even if the memory is not exhausted. This value can be changed by the user at any moment.
+	// The purpose of this limitation is to ensure that a blocked queue does not exhaust the heap memory.
+	Cap int
+	// The transport-layer maximum transmission unit (MTU). The value can be changed arbitrarily at any time between
+	// pushes. It defines the maximum number of data bytes per CAN data frame in outgoing transfers via this queue.
+	//
+	// Only the standard values should be used as recommended by the specification;
+	// otherwise, networking interoperability issues may arise. See recommended values CANARD_MTU_*.
+	//
+	// Valid values are any valid CAN frame data length value not smaller than 8.
+	// Invalid values are treated as the nearest valid value. The default is the maximum valid value.
+	MTU     int
+	size    int
+	root    *TreeNode
+	userRef any
+}
 type TxQueueItem struct {
+	// Must be first field due to use of unsafe.
 	base     TreeNode
 	nextInTx *TxQueueItem
 	deadline microsecond
@@ -35,6 +68,22 @@ type Frame struct {
 }
 
 type NodeID uint8
+
+//go:inline
+func (n NodeID) IsValid() bool {
+	return n.IsSet() || n.IsUnset()
+}
+
+//go:inline
+func (n NodeID) IsUnset() bool {
+	const unsetNodeID = 0xff // 255
+	return n == unsetNodeID
+}
+
+//go:inline
+func (n NodeID) IsSet() bool {
+	return n <= NODE_ID_MAX
+}
 
 type PortID uint32
 
@@ -68,8 +117,11 @@ type RxSub struct {
 }
 
 type TxMetadata struct {
-	priority Priority
-	txkind   TxKind
+	Priority Priority
+	TxKind   TxKind
+	Port     PortID
+	Remote   NodeID
+	TID      TID
 }
 
 type RxTransfer struct {
@@ -94,13 +146,12 @@ func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, ou
 	if err != nil {
 		return err
 	}
-	if NodeIDUnset != model.dstNode && ins.NodeID != model.dstNode {
+	if nodeIDUnset != model.dstNode && ins.NodeID != model.dstNode {
 		return ErrBadDstAddr
 	}
 	// This is the reason the function has a logarithmic time complexity of the number of subscriptions.
 	// Note also that this one of the two variable-complexity operations in the RX pipeline; the other one
 	// is memcpy(). Excepting these two cases, the entire RX pipeline contains neither loops nor recursion.
-	// GetRxSub
 	got, err := search(&ins.rxSub[model.txKind], model.port, predicateOnPortID, nil)
 	if err != nil {
 		return err
@@ -118,148 +169,44 @@ func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, ou
 	return ins.rxAcceptFrame(sub, &model, rti, outTx)
 }
 
-func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, outTx *RxTransfer) error {
+func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *TxMetadata, payloadSize int, payload []byte) error {
 	switch {
-	case sub == nil || frame == nil || outTx == nil:
+	case q == nil || metadata == nil:
 		return ErrInvalidArgument
-	case len(frame.payload) == 0:
+	case len(payload) == 0 && payloadSize != 0:
 		return errEmptyPayload
-	case frame.tid > TRANSFER_ID_MAX:
-		return ErrBadTransferID
-	case NodeIDUnset != frame.dstNode && ins.NodeID != frame.dstNode:
-		return ErrBadDstAddr
-	case frame.srcNode > NODE_ID_MAX && frame.srcNode != NodeIDUnset:
-		return ErrInvalidNodeID
 	}
-
-	if frame.srcNode <= NODE_ID_MAX {
-		// If such session does not exist, create it. This only makes sense if this is the first frame of a
-		// transfer, otherwise, we won't be able to receive the transfer anyway so we don't bother.
-		if sub.sessions[frame.srcNode] == nil && frame.txStart {
-			sub.sessions[frame.srcNode] = &internalRxSession{
-				txTimestamp: frame.timestamp,
-				crc:         CRC_INITIAL,
-				tid:         frame.tid,
-				rti:         rti,
-				toggle:      true, // INITIAL_TOGGLE_STATE
-			}
-		}
-		if sub.sessions[frame.srcNode] != nil {
-			return ins.rxSessionUpdate(sub.sessions[frame.srcNode], frame,
-				rti, sub.tidTimeout, sub.extent, outTx)
-		}
-	} else {
-		// Anonymous transfer. Must allocate according to libcanard.
-		payloadSize := min(sub.extent, frame.payloadSize)
-		payload := make([]byte, payloadSize)
-		//rxInitTransferMetadataFromFrame(frame, &out_transfer->metadata);
-		outTx.timestamp = frame.timestamp
-		outTx.payloadSize = payloadSize
-		outTx.payload = payload
-		copy(payload, frame.payload[:payloadSize])
+	pl_mtu := adjustPresentationLayerMTU(q.MTU)
+	maybeCan, err := metadata.makeCANID(payloadSize, payload, src, pl_mtu)
+	if err != nil {
+		return err
+	}
+	if payloadSize > pl_mtu {
+		panic("multiframe transfer unsupported as of yet")
+	}
+	err = q.pushSingleFrame(txDeadline, maybeCan, metadata.TID, payloadSize, payload)
+	if err != nil {
+		return err
 	}
 	return nil
 }
 
-func (ins *Instance) rxSessionUpdate(rxs *internalRxSession, frame *RxFrameModel, rti uint8, txIdTimeout microsecond, extent int, outTx *RxTransfer) error {
-	switch {
-	case rxs == nil || frame == nil || outTx == nil:
-		return ErrInvalidArgument
-	case rxs.tid > TRANSFER_ID_MAX || frame.tid > TRANSFER_ID_MAX:
-		return ErrBadTransferID
+func (q *TxQueue) Peek() *TxQueueItem {
+	tqi := findExtremum(q.root, false)
+	if tqi == nil {
+		return nil
 	}
-
-	TIDTimeOut := frame.timestamp > rxs.txTimestamp && (frame.timestamp-rxs.txTimestamp) > txIdTimeout
-	notPreviousTID := rxComputeTransferIDDifference(rxs.tid, frame.tid) > 1
-	needRestart := TIDTimeOut || (rxs.rti == rti && frame.txStart && notPreviousTID)
-
-	if needRestart {
-		rxs.reset(frame.tid, rti)
-	}
-	if needRestart && !frame.txStart {
-		// SOT miss. Following is equivalent to rxSessionRestart in libcanard
-		rxs.reset((rxs.tid+1)&TRANSFER_ID_MAX, rxs.rti) // RTI is retained
-		rxs.payload = nil
-		return errTODO // freed.
-	}
-	correctTransport := rxs.rti == rti
-	correctToggle := frame.toggle == rxs.toggle
-	correctTID := frame.tid == rxs.tid
-	if correctTransport && correctToggle && correctTID {
-		return ins.rxSessionAcceptFrame(rxs, frame, extent, outTx)
-	}
-	return errTODO
+	return (*TxQueueItem)(unsafe.Pointer(tqi))
 }
 
-func rxComputeTransferIDDifference(a, b TID) uint8 {
-	diff := int16(a) - int16(b)
-	if diff < 0 {
-		diff += 1 << TRANSFER_ID_BIT_LENGTH
-	}
-	return uint8(diff)
-}
-
-func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *RxFrameModel, extent int, outTx *RxTransfer) error {
-	switch {
-	case rxs == nil || frame == nil || outTx == nil:
-		return ErrInvalidArgument
-	case len(frame.payload) == 0:
-		return errEmptyPayload
-	case frame.tid > TRANSFER_ID_MAX:
-		return ErrBadTransferID
-	}
-
-	if frame.txStart {
-		rxs.txTimestamp = frame.timestamp
-	}
-	singleFrame := frame.txStart && frame.txEnd
-	if !singleFrame {
-		rxs.crc = rxs.crc.Add(frame.payload)
-	}
-
-	return nil
-}
-
-func (ins *Instance) rxSessionWritePayload(rxs *internalRxSession, extent, payloadSize int, payload []byte) error {
-	switch {
-	case rxs == nil:
-		return ErrInvalidArgument
-	case len(payload) == 0 || payloadSize == 0:
-		return errEmptyPayload
-	case len(rxs.payload) > extent || len(rxs.payload) > rxs.totalPayloadSize:
-		//  CANARD_ASSERT((payload != NULL) || (payload_size == 0U)); unreachable in go
-		return errTODO
-	}
-
-	rxs.totalPayloadSize += payloadSize
-	if cap(rxs.payload) == 0 && extent > 0 {
-		if rxs.payloadSize != 0 {
-			panic("assert rxs.payloadSize == 0")
-		}
-		// Allocate the payload lazily, as late as possible.
-		rxs.payload = make([]byte, extent)
-	}
-	bytesToCopy := payloadSize
-	if rxs.payloadSize+payloadSize > extent {
-		bytesToCopy = extent - rxs.payloadSize
-		if rxs.payloadSize > extent || rxs.payloadSize+bytesToCopy != extent || bytesToCopy >= payloadSize {
-			panic("assert payload bounds rxSessionWritePayload")
+func (q *TxQueue) Pop(item *TxQueueItem) *TxQueueItem {
+	if item == nil {
+		item = q.Peek()
+		if item == nil {
+			panic("attempted to pop with no items in queue")
 		}
 	}
-	n := copy(rxs.payload[:rxs.payloadSize], payload[:bytesToCopy])
-	if n != bytesToCopy {
-		panic("insufficient rxs mem")
-	}
-	rxs.payloadSize += bytesToCopy
-	if rxs.payloadSize > extent {
-		panic("rxs payload exceed extent")
-	}
-	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	remove(&q.root, &item.base)
+	q.size--
+	return item
 }
