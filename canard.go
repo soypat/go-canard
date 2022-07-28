@@ -81,6 +81,11 @@ func (n NodeID) IsUnset() bool {
 }
 
 //go:inline
+func (n *NodeID) Unset() {
+	*n = 0xff
+}
+
+//go:inline
 func (n NodeID) IsSet() bool {
 	return n <= NODE_ID_MAX
 }
@@ -146,7 +151,7 @@ func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, ou
 	if err != nil {
 		return err
 	}
-	if nodeIDUnset != model.dstNode && ins.NodeID != model.dstNode {
+	if !model.dstNode.IsUnset() && ins.NodeID != model.dstNode {
 		return ErrBadDstAddr
 	}
 	// This is the reason the function has a logarithmic time complexity of the number of subscriptions.

@@ -1,9 +1,5 @@
 package canard
 
-const (
-	nodeIDUnset = 255
-)
-
 type TxKind uint8
 
 const (

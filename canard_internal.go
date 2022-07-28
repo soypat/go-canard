@@ -59,9 +59,9 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 		return errEmptyPayload
 	case frame.tid > TRANSFER_ID_MAX:
 		return ErrBadTransferID
-	case nodeIDUnset != frame.dstNode && ins.NodeID != frame.dstNode:
+	case !frame.dstNode.IsUnset() && ins.NodeID != frame.dstNode:
 		return ErrBadDstAddr
-	case frame.srcNode > NODE_ID_MAX && frame.srcNode != nodeIDUnset:
+	case !frame.srcNode.IsValid():
 		return ErrInvalidNodeID
 	}
 
@@ -169,9 +169,9 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 		out.txKind = TxKindMessage
 		out.port = PortID(canID>>offset_SubjectID) & SUBJECT_ID_MAX
 		if canID&FLAG_ANONYMOUS_MESSAGE != 0 {
-			out.srcNode = nodeIDUnset
+			out.srcNode.Unset()
 		}
-		out.dstNode = nodeIDUnset
+		out.dstNode.Unset()
 		// Reserved bits may be unreserved in the future.
 		valid = (0 == (canID & FLAG_RESERVED_23)) && (0 == (canID & FLAG_RESERVED_07))
 	} else {
@@ -204,7 +204,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 	// valid = valid && ((!out->start_of_transfer) || (INITIAL_TOGGLE_STATE == out->toggle));
 	valid = valid && (!out.txStart || true == out.toggle) //
 	// Anonymous transfers can be only single-frame transfers.
-	valid = valid && ((out.txStart && out.txEnd) || (nodeIDUnset == out.srcNode))
+	valid = valid && ((out.txStart && out.txEnd) || out.srcNode.IsUnset())
 	// Non-last frames of a multi-frame transfer shall utilize the MTU fully.
 	valid = valid && ((out.payloadSize >= MFT_NON_LAST_FRAME_PAYLOAD_MIN) || out.txEnd)
 	// A frame that is a part of a multi-frame transfer cannot be empty (tail byte not included).
