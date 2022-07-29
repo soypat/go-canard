@@ -5,7 +5,8 @@ type TxKind uint8
 const (
 	TxKindMessage  TxKind = iota ///< Multicast, from publisher to all subscribers.
 	TxKindResponse               ///< Point-to-point, from server to client.
-	TxKindRequest                ///< Point-to-point, from client to server.
+	TxKindRequest
+	numberOfTxKinds ///< Point-to-point, from client to server.
 )
 
 type Priority uint8

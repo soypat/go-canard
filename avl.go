@@ -7,6 +7,7 @@ package canard
 type TreeNode struct {
 	up *TreeNode
 	lr [2]*TreeNode
+	// Balance factor.
 	bf int8
 }
 
@@ -72,7 +73,7 @@ func retraceOnGrowth(added *TreeNode) *TreeNode {
 }
 
 func adjustBalance(x *TreeNode, increment bool) *TreeNode {
-	if x == nil || (x.bf >= -1 && x.bf <= 1) {
+	if x == nil || !(x.bf >= -1 && x.bf <= 1) {
 		panic("bad x arg")
 	}
 	out := x
@@ -241,6 +242,23 @@ func avlTrivialFactory(userRef any) *TreeNode {
 	return userRef.(*TreeNode)
 }
 
+// Height is a recursive function to find node height.
+// Best not used in production.
+func (n *TreeNode) Height() int {
+	if n == nil {
+		return 0
+	}
+	return 1 + max(n.lr[0].height(0), n.lr[1].height(0))
+}
+
+func (n *TreeNode) height(lvl int) int {
+	// Allow max 12 levels. Probably a loop if reached.
+	if n == nil || lvl == 11 {
+		return lvl
+	}
+	return max(n.lr[0].height(lvl+1), n.lr[1].height(lvl+1))
+}
+
 //go:inline
 func bsign(b bool) int8 {
 	if b {
@@ -255,4 +273,11 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func max(a, b int) int {
+	if b > a {
+		return b
+	}
+	return a
 }

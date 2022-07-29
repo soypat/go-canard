@@ -111,6 +111,8 @@ type RxFrameModel struct {
 	payload     []byte
 }
 
+const nodemax = 127
+
 type RxSub struct {
 	// must be first field due to use of unsafe.
 	base       TreeNode
@@ -118,7 +120,7 @@ type RxSub struct {
 	extent     int
 	port       PortID
 	userRef    interface{}
-	sessions   [NODE_ID_MAX]*internalRxSession
+	sessions   [nodemax]*internalRxSession
 }
 
 type TxMetadata struct {
@@ -138,7 +140,7 @@ type RxTransfer struct {
 	payload     []byte
 }
 
-func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, outTx *RxTransfer, outSub *RxSub) error {
+func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outTx *RxTransfer, outSub *RxSub) error {
 	switch {
 	case ins == nil || outTx == nil || frame == nil:
 		return ErrInvalidArgument
@@ -172,6 +174,48 @@ func (ins *Instance) RxAccept(timestamp microsecond, frame *Frame, rti uint8, ou
 		return errors.New("TODO sub port not equal to model port")
 	}
 	return ins.rxAcceptFrame(sub, &model, rti, outTx)
+}
+
+func (ins *Instance) Subscribe(kind TxKind, port PortID, extent int, tidTimeout microsecond, outSub *RxSub) error {
+	switch {
+	case outSub == nil:
+		return ErrInvalidArgument
+	case kind >= numberOfTxKinds:
+		return ErrTransferKind
+	}
+	err := ins.Unsubscribe(kind, port)
+	if err != nil {
+		return err
+	}
+	outSub.tidTimeout = tidTimeout
+	outSub.extent = extent
+	outSub.port = port
+	got, err := search(&ins.rxSub[kind], outSub, predicateOnStruct, avlTrivialFactory)
+	if err != nil {
+		return err
+	}
+	if got != &outSub.base {
+		panic("bad search result")
+	}
+	return nil
+}
+
+func (ins *Instance) Unsubscribe(kind TxKind, port PortID) error {
+	switch {
+	case kind >= numberOfTxKinds:
+		return ErrTransferKind
+	}
+	portcp := port
+	got, err := search(&ins.rxSub[kind], &portcp, predicateOnPortID, nil)
+	if err != nil {
+		return err
+	}
+	sub := (*RxSub)(unsafe.Pointer(got))
+	remove(&ins.rxSub[kind], &sub.base)
+	if sub.port != port {
+		panic("bad search result")
+	}
+	return nil
 }
 
 func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *TxMetadata, payloadSize int, payload []byte) error {

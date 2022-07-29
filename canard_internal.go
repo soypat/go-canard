@@ -157,7 +157,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 	switch {
 	case frame == nil || out == nil:
 		return ErrInvalidArgument
-	case frame.payloadSize > 0:
+	case frame.payloadSize == 0:
 		return errEmptyPayload
 	}
 
@@ -193,7 +193,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 
 	// Tail byte parsing.
 	// No violation of MISRA.
-	tail := frame.payload[out.payloadSize-1]
+	tail := frame.payload[out.payloadSize]
 	out.tid = TID(tail & TRANSFER_ID_MAX)
 	out.txStart = (tail & TAIL_START_OF_TRANSFER) != 0
 	out.txEnd = (tail & TAIL_END_OF_TRANSFER) != 0
@@ -225,7 +225,7 @@ func (rxs *internalRxSession) reset(txid TID, rti uint8) {
 }
 
 func predicateOnPortID(userRef any, node *TreeNode) int8 {
-	sought := userRef.(PortID)
+	sought := *userRef.(*PortID)
 	other := (*RxSub)(unsafe.Pointer(node)).port
 	if sought == other {
 		return 0
