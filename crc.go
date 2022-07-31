@@ -1,12 +1,9 @@
 package canard
 
-const (
-	CRC_INITIAL    = 0xFFFF
-	CRC_RESIDUE    = 0x0000
-	CRC_SIZE_BYTES = 2
-)
-
+// CRC is a Cyclic Redundancy Check error correction implementation.
 type CRC uint16
+
+func newCRC() CRC { return CRC(0xffff) }
 
 func (c CRC) Add(data []byte) CRC {
 	for _, b := range data {

@@ -1,6 +1,9 @@
 package canard
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestRxBasic(t *testing.T) {
 	const (
@@ -8,8 +11,8 @@ func TestRxBasic(t *testing.T) {
 		payloadSize   = 65
 	)
 	ins := &Instance{}
-	transfer := &RxTransfer{}
-	var sub *RxSub
+	transfer := &Transfer{}
+	var sub *Sub
 	accept := func(rti uint8, timestamp microsecond, canid uint32, payload []byte) error {
 		return ins.Accept(timestamp, &Frame{
 			extendedCANID: canid,
@@ -18,21 +21,22 @@ func TestRxBasic(t *testing.T) {
 		}, rti, transfer, sub)
 	}
 	err := accept(0, 1000e6, extendedCANID, []byte{0b111_00000})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrNoMatchingSub) {
+		t.Fatalf("expecting ErrNoMatchingSub, got %v", err)
 	}
 	if sub != nil {
 		t.Error("expected subscription to remain nil after accepting")
 	}
-	subMsg := RxSub{}
+	subMsg := Sub{}
 	// New.
 	err = ins.Subscribe(TxKindMessage, 0b0110011001100, 32, 2e6, &subMsg)
 	if err != nil {
 		t.Error("expected error on new", err)
 	}
-	// Replaced
+	// Replaced.
 	err = ins.Subscribe(TxKindMessage, 0b0110011001100, 16, 1e6, &subMsg)
 	if err != nil {
 		t.Error(err)
 	}
+
 }

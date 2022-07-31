@@ -16,6 +16,9 @@ func search(root **TreeNode, userRef any, predicate func(any, *TreeNode) int8, f
 	switch {
 	case root == nil || predicate == nil:
 		return out, ErrInvalidArgument
+	case *root == nil && factory == nil:
+		// Edge case copied from libcanard.
+		return out, ErrAVLNilRoot
 	}
 	up := *root
 	n := root
@@ -30,10 +33,16 @@ func search(root **TreeNode, userRef any, predicate func(any, *TreeNode) int8, f
 			panic("bad up pointer")
 		}
 	}
+	if factory == nil {
+		return nil, ErrAVLNodeNotFound
+	}
 
 	// Not found in tree. Must add.
-	out = &TreeNode{up: up}
+	out = factory(userRef)
 	*n = out
+	out.up = up
+	out.lr = [2]*TreeNode{}
+	out.bf = 0
 	rt := retraceOnGrowth(out)
 	if rt != nil {
 		*root = rt
@@ -238,8 +247,14 @@ func remove(root **TreeNode, node *TreeNode) {
 }
 
 /// Used for inserting new items into AVL trees.
-func avlTrivialFactory(userRef any) *TreeNode {
-	return userRef.(*TreeNode)
+func avlTrivialFactory(userRef any) (node *TreeNode) {
+	switch a := userRef.(type) {
+	case *Sub:
+		node = &a.base
+	default:
+		panic("undefined type")
+	}
+	return node
 }
 
 // Height is a recursive function to find node height.

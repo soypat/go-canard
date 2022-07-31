@@ -15,4 +15,7 @@ var (
 	ErrBadTransferID   = errors.New("transfer id must be in 0.." + strconv.FormatUint(TRANSFER_ID_MAX, 10))
 	errTODO            = errors.New("go-canard: generic error")
 	ErrTransferKind    = errors.New("undefined transfer kind")
+
+	ErrAVLNodeNotFound = errors.New("avl: node not found")
+	ErrAVLNilRoot      = errors.New("avl: nil root")
 )

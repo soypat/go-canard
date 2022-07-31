@@ -21,20 +21,6 @@ type TxItem struct {
 	payloadBuffer [_MTU]byte
 }
 
-func newTxItem(deadline microsecond, size int, extendedCANID uint32) *TxItem {
-	tqi := &TxItem{
-		base: TxQueueItem{
-			deadline: deadline,
-			frame: Frame{
-				payloadSize:   size,
-				extendedCANID: extendedCANID,
-			},
-		},
-	}
-	tqi.base.frame.payload = tqi.payloadBuffer[:]
-	return tqi
-}
-
 type TxQueue struct {
 	// The maximum number of frames this queue is allowed to contain. An attempt to push more will fail with an
 	// out-of-memory error even if the memory is not exhausted. This value can be changed by the user at any moment.
@@ -96,7 +82,7 @@ type PortID uint32
 type TID uint8
 
 /// High-level transport frame model.
-type RxFrameModel struct {
+type FrameModel struct {
 	timestamp   microsecond
 	prority     Priority
 	txKind      TxKind
@@ -113,7 +99,7 @@ type RxFrameModel struct {
 
 const nodemax = 127
 
-type RxSub struct {
+type Sub struct {
 	// must be first field due to use of unsafe.
 	base       TreeNode
 	tidTimeout microsecond
@@ -123,7 +109,7 @@ type RxSub struct {
 	sessions   [nodemax]*internalRxSession
 }
 
-type TxMetadata struct {
+type Metadata struct {
 	Priority Priority
 	TxKind   TxKind
 	Port     PortID
@@ -131,8 +117,8 @@ type TxMetadata struct {
 	TID      TID
 }
 
-type RxTransfer struct {
-	metadata TxMetadata
+type Transfer struct {
+	metadata Metadata
 	// The timestamp of the first received CAN frame of this transfer.
 	// The time system may be arbitrary as long as the clock is monotonic (steady).
 	timestamp   microsecond
@@ -140,7 +126,7 @@ type RxTransfer struct {
 	payload     []byte
 }
 
-func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outTx *RxTransfer, outSub *RxSub) error {
+func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outTx *Transfer, outSub *Sub) error {
 	switch {
 	case ins == nil || outTx == nil || frame == nil:
 		return ErrInvalidArgument
@@ -148,7 +134,7 @@ func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outT
 		return errEmptyPayload
 	}
 
-	model := RxFrameModel{}
+	model := FrameModel{}
 	err := rxTryParseFrame(timestamp, frame, &model)
 	if err != nil {
 		return err
@@ -160,10 +146,13 @@ func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outT
 	// Note also that this one of the two variable-complexity operations in the RX pipeline; the other one
 	// is memcpy(). Excepting these two cases, the entire RX pipeline contains neither loops nor recursion.
 	got, err := search(&ins.rxSub[model.txKind], model.port, predicateOnPortID, nil)
+	if errors.Is(err, ErrAVLNilRoot) || errors.Is(err, ErrAVLNodeNotFound) {
+		return ErrNoMatchingSub
+	}
 	if err != nil {
 		return err
 	}
-	sub := (*RxSub)(unsafe.Pointer(got))
+	sub := (*Sub)(unsafe.Pointer(got))
 	if outSub != nil {
 		outSub = sub
 	}
@@ -176,7 +165,7 @@ func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outT
 	return ins.rxAcceptFrame(sub, &model, rti, outTx)
 }
 
-func (ins *Instance) Subscribe(kind TxKind, port PortID, extent int, tidTimeout microsecond, outSub *RxSub) error {
+func (ins *Instance) Subscribe(kind TxKind, port PortID, extent int, tidTimeout microsecond, outSub *Sub) error {
 	switch {
 	case outSub == nil:
 		return ErrInvalidArgument
@@ -207,10 +196,16 @@ func (ins *Instance) Unsubscribe(kind TxKind, port PortID) error {
 	}
 	portcp := port
 	got, err := search(&ins.rxSub[kind], &portcp, predicateOnPortID, nil)
+	if errors.Is(err, ErrAVLNilRoot) || errors.Is(err, ErrAVLNodeNotFound) {
+		return nil // Node not exist, no need to remove.
+	}
 	if err != nil {
 		return err
 	}
-	sub := (*RxSub)(unsafe.Pointer(got))
+	sub := (*Sub)(unsafe.Pointer(got))
+	if got == nil || sub == nil {
+		return nil
+	}
 	remove(&ins.rxSub[kind], &sub.base)
 	if sub.port != port {
 		panic("bad search result")
@@ -218,7 +213,7 @@ func (ins *Instance) Unsubscribe(kind TxKind, port PortID) error {
 	return nil
 }
 
-func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *TxMetadata, payloadSize int, payload []byte) error {
+func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *Metadata, payloadSize int, payload []byte) error {
 	switch {
 	case q == nil || metadata == nil:
 		return ErrInvalidArgument
@@ -258,4 +253,9 @@ func (q *TxQueue) Pop(item *TxQueueItem) *TxQueueItem {
 	remove(&q.root, &item.base)
 	q.size--
 	return item
+}
+
+func (ins *Instance) GetSubs(kind TxKind) (subs []*Sub) {
+	// ins.rxSub[kind].traverse()
+	return subs
 }

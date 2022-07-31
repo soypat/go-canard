@@ -51,7 +51,7 @@ func (ins *Instance) rxSessionWritePayload(rxs *internalRxSession, extent, paylo
 	return nil
 }
 
-func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, outTx *RxTransfer) error {
+func (ins *Instance) rxAcceptFrame(sub *Sub, frame *FrameModel, rti uint8, outTx *Transfer) error {
 	switch {
 	case sub == nil || frame == nil || outTx == nil:
 		return ErrInvalidArgument
@@ -71,7 +71,7 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 		if sub.sessions[frame.srcNode] == nil && frame.txStart {
 			sub.sessions[frame.srcNode] = &internalRxSession{
 				txTimestamp: frame.timestamp,
-				crc:         CRC_INITIAL,
+				crc:         newCRC(),
 				tid:         frame.tid,
 				rti:         rti,
 				toggle:      true, // INITIAL_TOGGLE_STATE
@@ -94,7 +94,7 @@ func (ins *Instance) rxAcceptFrame(sub *RxSub, frame *RxFrameModel, rti uint8, o
 	return nil
 }
 
-func (ins *Instance) rxSessionUpdate(rxs *internalRxSession, frame *RxFrameModel, rti uint8, txIdTimeout microsecond, extent int, outTx *RxTransfer) error {
+func (ins *Instance) rxSessionUpdate(rxs *internalRxSession, frame *FrameModel, rti uint8, txIdTimeout microsecond, extent int, outTx *Transfer) error {
 	switch {
 	case rxs == nil || frame == nil || outTx == nil:
 		return ErrInvalidArgument
@@ -132,7 +132,7 @@ func rxComputeTransferIDDifference(a, b TID) uint8 {
 	return uint8(diff)
 }
 
-func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *RxFrameModel, extent int, outTx *RxTransfer) error {
+func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *FrameModel, extent int, outTx *Transfer) error {
 	switch {
 	case rxs == nil || frame == nil || outTx == nil:
 		return ErrInvalidArgument
@@ -153,7 +153,7 @@ func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *RxFrame
 	return nil
 }
 
-func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
+func rxTryParseFrame(ts microsecond, frame *Frame, out *FrameModel) error {
 	switch {
 	case frame == nil || out == nil:
 		return ErrInvalidArgument
@@ -218,7 +218,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *RxFrameModel) error {
 func (rxs *internalRxSession) reset(txid TID, rti uint8) {
 	rxs.totalPayloadSize = 0
 	rxs.payload = rxs.payload[:0]
-	rxs.crc = CRC_INITIAL
+	rxs.crc = newCRC()
 	rxs.tid = txid
 	rxs.toggle = true // INITIAL TOGGLE STATE
 	rxs.rti = rti
@@ -226,7 +226,7 @@ func (rxs *internalRxSession) reset(txid TID, rti uint8) {
 
 func predicateOnPortID(userRef any, node *TreeNode) int8 {
 	sought := *userRef.(*PortID)
-	other := (*RxSub)(unsafe.Pointer(node)).port
+	other := (*Sub)(unsafe.Pointer(node)).port
 	if sought == other {
 		return 0
 	}
@@ -234,7 +234,7 @@ func predicateOnPortID(userRef any, node *TreeNode) int8 {
 }
 
 func predicateOnStruct(userRef any, node *TreeNode) int8 {
-	port := userRef.(*RxSub).port
+	port := userRef.(*Sub).port
 	return predicateOnPortID(port, node)
 }
 
@@ -245,21 +245,19 @@ func min(a, b int) int {
 	return b
 }
 
-const maxCANIdx = int(unsafe.Sizeof(canLengthToDLC)/unsafe.Sizeof(canLengthToDLC[0]) - 1)
-
 func adjustPresentationLayerMTU(mtuBytes int) (mtu int) {
 	switch {
 	case mtuBytes < _MTU_CAN_CLASSIC:
 		mtu = _MTU_CAN_CLASSIC
-	case mtuBytes <= maxCANIdx:
+	case mtuBytes <= len(canLengthToDLC)-1:
 		mtu = int(canDLCToLength[canLengthToDLC[mtuBytes]])
 	default:
-		mtu = int(canDLCToLength[canLengthToDLC[maxCANIdx]])
+		mtu = int(canDLCToLength[canLengthToDLC[len(canLengthToDLC)-1]])
 	}
 	return mtu - 1
 }
 
-func (m *TxMetadata) makeCANID(payloadSize int, payload []byte, local NodeID, presentationLayerMTU int) (uint32, error) {
+func (m *Metadata) makeCANID(payloadSize int, payload []byte, local NodeID, presentationLayerMTU int) (uint32, error) {
 	switch {
 	case presentationLayerMTU <= 0:
 		return 0, ErrInvalidArgument
@@ -299,7 +297,7 @@ func (m *TxMetadata) makeCANID(payloadSize int, payload []byte, local NodeID, pr
 }
 
 func newNodeID(data []byte) NodeID {
-	return NodeID((CRC).Add(CRC_INITIAL, data)) & NODE_ID_MAX
+	return NodeID((CRC).Add(newCRC(), data)) & NODE_ID_MAX
 }
 
 func makeMessageSessionSpecifier(subject PortID, src NodeID) uint32 {
@@ -374,4 +372,31 @@ func predicateTx(userRef any, node *TreeNode) int8 {
 	other := (*TxQueueItem)(unsafe.Pointer(node))
 	sign := bsign(target.frame.extendedCANID >= other.frame.extendedCANID)
 	return sign
+}
+
+func newTxItem(deadline microsecond, size int, extendedCANID uint32) *TxItem {
+	tqi := &TxItem{
+		base: TxQueueItem{
+			deadline: deadline,
+			frame: Frame{
+				payloadSize:   size,
+				extendedCANID: extendedCANID,
+			},
+		},
+	}
+	tqi.base.frame.payload = tqi.payloadBuffer[:]
+	return tqi
+}
+
+func (root *TreeNode) traverse(i int, fn func(n *TreeNode)) int {
+	l, r := root.lr[0], root.lr[1]
+	if l != nil {
+		fn(l)
+		i = l.traverse(i+1, fn)
+	}
+	if r != nil {
+		fn(r)
+		i = r.traverse(i+1, fn)
+	}
+	return i
 }
