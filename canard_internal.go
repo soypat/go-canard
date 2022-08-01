@@ -389,13 +389,12 @@ func newTxItem(deadline microsecond, size int, extendedCANID uint32) *TxItem {
 }
 
 func (root *TreeNode) traverse(i int, fn func(n *TreeNode)) int {
+	fn(root)
 	l, r := root.lr[0], root.lr[1]
 	if l != nil {
-		fn(l)
 		i = l.traverse(i+1, fn)
 	}
 	if r != nil {
-		fn(r)
 		i = r.traverse(i+1, fn)
 	}
 	return i

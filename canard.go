@@ -256,6 +256,13 @@ func (q *TxQueue) Pop(item *TxQueueItem) *TxQueueItem {
 }
 
 func (ins *Instance) GetSubs(kind TxKind) (subs []*Sub) {
-	// ins.rxSub[kind].traverse()
+	switch {
+	case kind >= numberOfTxKinds:
+		panic("invalid kind")
+	}
+	ins.rxSub[kind].traverse(0, func(n *TreeNode) {
+		sub := (*Sub)(unsafe.Pointer(n))
+		subs = append(subs, sub)
+	})
 	return subs
 }
