@@ -22,7 +22,7 @@ func TestInstanceSubscribe(t *testing.T) {
 
 	// Create a message subscription.
 	subMsg := Sub{}
-	const portid = 0b0110011001100
+	const portid = 0xccc
 	// New.
 	err = ins.Subscribe(TxKindMessage, portid, 32, 2e6, &subMsg)
 	if err != nil {
@@ -88,19 +88,19 @@ func TestInstanceSubscribe(t *testing.T) {
 
 func TestInstanceAccept(t *testing.T) {
 	const (
+		port          = 0xccc //    0b0110011001100
 		extendedCANID = 0b001_00_0_11_0110011001100_0_0100111
 		payloadSize   = 65
 		timeout       = 1e8 + 1
 	)
-	_, _, sub, accept := newInstanceHelper()
-	subCp := *sub
-
-	// ins.Subscribe()
-	err := accept(0, timeout, extendedCANID, []byte{0b111_00000})
-	if *sub == subCp {
-		t.Error("subscription not modified")
-	}
+	ins, _, sub, accept := newInstanceHelper()
+	err := ins.Subscribe(TxKindMessage, port, 16, timeout, sub)
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = accept(0, timeout, extendedCANID, []byte{0b111_00000})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 }

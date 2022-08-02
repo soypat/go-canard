@@ -145,7 +145,8 @@ func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outT
 	// This is the reason the function has a logarithmic time complexity of the number of subscriptions.
 	// Note also that this one of the two variable-complexity operations in the RX pipeline; the other one
 	// is memcpy(). Excepting these two cases, the entire RX pipeline contains neither loops nor recursion.
-	got, err := search(&ins.rxSub[model.txKind], model.port, predicateOnPortID, nil)
+	portCp := model.port
+	got, err := search(&ins.rxSub[model.txKind], &portCp, predicateOnPortID, nil)
 	if errors.Is(err, ErrAVLNilRoot) || errors.Is(err, ErrAVLNodeNotFound) {
 		return ErrNoMatchingSub
 	}
