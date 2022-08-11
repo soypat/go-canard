@@ -160,7 +160,7 @@ func (can ecID) Priority() Priority  { return Priority(can>>offset_Priority) & p
 func (can ecID) Source() NodeID      { return NodeID(can & NODE_ID_MAX) }
 func (can ecID) Destination() NodeID { return NodeID(can>>offset_DstNodeID) & NODE_ID_MAX }
 func (can ecID) IsMessage() bool     { return 0 != can&FLAG_SERVICE_NOT_MESSAGE }
-func (can ecID) IsRequest() bool     { return can&FLAG_REQUEST_NOT_RESPONSE != 0 }
+func (can ecID) IsRequest() bool     { return 0 != can&FLAG_REQUEST_NOT_RESPONSE }
 func (can ecID) IsAnonymous() bool   { return 0 != can&FLAG_ANONYMOUS_MESSAGE }
 func (can ecID) PortID() PortID      { return PortID(can>>offset_ServiceID) & SERVICE_ID_MAX }
 
