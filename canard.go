@@ -160,7 +160,7 @@ func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outT
 	if sub == nil {
 		return ErrNoMatchingSub
 	}
-	if sub.port == model.port {
+	if sub.port != model.port {
 		return errors.New("TODO sub port not equal to model port")
 	}
 	return ins.rxAcceptFrame(sub, &model, rti, outTx)

@@ -94,10 +94,12 @@ func TestInstanceAccept(t *testing.T) {
 		timeout       = 1e8 + 1
 	)
 	ins, _, sub, accept := newInstanceHelper()
+	// Create a new subscription on which to listen.
 	err := ins.Subscribe(TxKindMessage, port, 16, timeout, sub)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Send
 	err = accept(0, timeout, extendedCANID, []byte{0b111_00000})
 	if err != nil {
 		t.Fatal(err)
