@@ -97,6 +97,14 @@ type FrameModel struct {
 	payload     []byte
 }
 
+func (tx *Metadata) fromRxFrame(frame *FrameModel) {
+	tx.Priority = frame.prority
+	tx.TxKind = frame.txKind
+	tx.Port = frame.port
+	tx.Remote = frame.srcNode
+	tx.TID = frame.tid
+}
+
 const nodemax = 127
 
 type Sub struct {

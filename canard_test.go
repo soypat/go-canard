@@ -12,7 +12,7 @@ func TestInstanceSubscribe(t *testing.T) {
 	)
 	ins, _, sub, accept := newInstanceHelper()
 	subCp := *sub
-	err := accept(0, 1000e6, extendedCANID, []byte{0b111_00000})
+	err := accept(0, 1000e6, extendedCANID, []byte{tailByte(true, true, true, 0)})
 	if !errors.Is(err, ErrNoMatchingSub) {
 		t.Fatalf("expecting ErrNoMatchingSub, got %v", err)
 	}
@@ -88,21 +88,30 @@ func TestInstanceSubscribe(t *testing.T) {
 
 func TestInstanceAccept(t *testing.T) {
 	const (
-		port          = 0xccc //    0b0110011001100
-		extendedCANID = 0b001_00_0_11_0110011001100_0_0100111
-		payloadSize   = 65
-		timeout       = 1e8 + 1
+		extendedCANID ecID = 0b001_00_0_11_0110011001100_0_0100111
+		port               = 0xccc
+		payloadSize        = 65
+		timeout            = 1e8 + 1
 	)
-	ins, _, sub, accept := newInstanceHelper()
+	ins, transfer, sub, accept := newInstanceHelper()
 	// Create a new subscription on which to listen.
 	err := ins.Subscribe(TxKindMessage, port, 16, timeout, sub)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Send
-	err = accept(0, timeout, extendedCANID, []byte{0b111_00000})
+	err = accept(0, timeout, uint32(extendedCANID), []byte{tailByte(true, true, true, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	_ = transfer
+	if sub.port != extendedCANID.PortID() {
+		t.Error("port ID not expected", extendedCANID.PortID(), sub.port)
+	}
+	if transfer.timestamp != timeout {
+		t.Error("transfer timeout not set", transfer)
+	}
+	if transfer.metadata.TxKind != TxKindMessage {
+		t.Error("txkind expected to be mesage")
+	}
 }

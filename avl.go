@@ -296,3 +296,15 @@ func max(a, b int) int {
 	}
 	return a
 }
+
+func (root *TreeNode) traverse(i int, fn func(n *TreeNode)) int {
+	fn(root)
+	l, r := root.lr[0], root.lr[1]
+	if l != nil {
+		i = l.traverse(i+1, fn)
+	}
+	if r != nil {
+		i = r.traverse(i+1, fn)
+	}
+	return i
+}

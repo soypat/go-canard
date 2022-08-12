@@ -18,7 +18,7 @@ func (ins *Instance) rxSessionWritePayload(rxs *internalRxSession, extent, paylo
 	switch {
 	case rxs == nil:
 		return ErrInvalidArgument
-	case len(payload) == 0 || payloadSize == 0:
+	case len(payload) == 0 && payloadSize != 0:
 		return errEmptyPayload
 	case len(rxs.payload) > extent || len(rxs.payload) > rxs.totalPayloadSize:
 		//  CANARD_ASSERT((payload != NULL) || (payload_size == 0U)); unreachable in go
@@ -147,9 +147,39 @@ func (ins *Instance) rxSessionAcceptFrame(rxs *internalRxSession, frame *FrameMo
 	}
 	singleFrame := frame.txStart && frame.txEnd
 	if !singleFrame {
-		rxs.crc = rxs.crc.Add(frame.payload)
+		rxs.crc = rxs.crc.Add(frame.payload[:frame.payloadSize])
 	}
-
+	err := ins.rxSessionWritePayload(rxs, extent, frame.payloadSize, frame.payload)
+	if err != nil {
+		// OOM session restart here.
+		return err
+	}
+	if !frame.txEnd {
+		rxs.toggle = !rxs.toggle
+		return errTODO // not sure if this correct
+	}
+	if !singleFrame && rxs.crc != 0 {
+		rxs.reset(rxs.tid+1, rxs.rti)
+		return nil
+	}
+	outTx.metadata.fromRxFrame(frame)
+	outTx.timestamp = rxs.txTimestamp
+	outTx.payloadSize = rxs.payloadSize
+	outTx.payload = rxs.payload
+	if rxs.totalPayloadSize < rxs.payloadSize {
+		panic("OOB rxs payload")
+	}
+	truncatedAmount := rxs.totalPayloadSize - rxs.payloadSize
+	const CRC_SIZE = 2 // bytes
+	if !singleFrame && CRC_SIZE > truncatedAmount {
+		if outTx.payloadSize < 2-truncatedAmount {
+			panic("OOB crc not fit in payload")
+		}
+		outTx.payloadSize -= 2 - truncatedAmount
+	}
+	// Ownership passed over to the application, nullify to prevent modifying.
+	rxs.payload = nil
+	rxs.reset(rxs.tid+1, rxs.rti)
 	return nil
 }
 
@@ -159,10 +189,17 @@ type ecID uint32
 func (can ecID) Priority() Priority  { return Priority(can>>offset_Priority) & priorityMask }
 func (can ecID) Source() NodeID      { return NodeID(can & NODE_ID_MAX) }
 func (can ecID) Destination() NodeID { return NodeID(can>>offset_DstNodeID) & NODE_ID_MAX }
-func (can ecID) IsMessage() bool     { return 0 != can&FLAG_SERVICE_NOT_MESSAGE }
-func (can ecID) IsRequest() bool     { return 0 != can&FLAG_REQUEST_NOT_RESPONSE }
-func (can ecID) IsAnonymous() bool   { return 0 != can&FLAG_ANONYMOUS_MESSAGE }
-func (can ecID) PortID() PortID      { return PortID(can>>offset_ServiceID) & SERVICE_ID_MAX }
+func (can ecID) IsMessage() bool     { return 0 == can&FLAG_SERVICE_NOT_MESSAGE }
+func (can ecID) IsRequest() bool {
+	return !can.IsMessage() && 0 != can&FLAG_REQUEST_NOT_RESPONSE
+}
+func (can ecID) IsAnonymous() bool { return 0 != can&FLAG_ANONYMOUS_MESSAGE }
+func (can ecID) PortID() PortID {
+	if can.IsMessage() {
+		return PortID(can>>offset_SubjectID) & SUBJECT_ID_MAX
+	}
+	return PortID(can>>offset_ServiceID) & SERVICE_ID_MAX
+}
 
 func rxTryParseFrame(ts microsecond, frame *Frame, out *FrameModel) error {
 	switch {
@@ -174,6 +211,7 @@ func rxTryParseFrame(ts microsecond, frame *Frame, out *FrameModel) error {
 
 	valid := false
 	canID := frame.extendedCANID
+	out.timestamp = ts
 	out.prority = Priority(canID>>offset_Priority) & priorityMask
 	out.srcNode = NodeID(canID & NODE_ID_MAX)
 	if 0 == canID&FLAG_SERVICE_NOT_MESSAGE {
@@ -230,7 +268,7 @@ func (rxs *internalRxSession) reset(txid TID, rti uint8) {
 	rxs.totalPayloadSize = 0
 	rxs.payload = rxs.payload[:0]
 	rxs.crc = newCRC()
-	rxs.tid = txid
+	rxs.tid = txid & TRANSFER_ID_MAX
 	rxs.toggle = true // INITIAL TOGGLE STATE
 	rxs.rti = rti
 }
@@ -397,16 +435,4 @@ func newTxItem(deadline microsecond, size int, extendedCANID uint32) *TxItem {
 	}
 	tqi.base.frame.payload = tqi.payloadBuffer[:]
 	return tqi
-}
-
-func (root *TreeNode) traverse(i int, fn func(n *TreeNode)) int {
-	fn(root)
-	l, r := root.lr[0], root.lr[1]
-	if l != nil {
-		i = l.traverse(i+1, fn)
-	}
-	if r != nil {
-		i = r.traverse(i+1, fn)
-	}
-	return i
 }
