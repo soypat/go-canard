@@ -14,6 +14,13 @@ type internalRxSession struct {
 	toggle bool
 }
 
+/// Chain of TX frames prepared for insertion into a TX queue.
+type txChain struct {
+	head *TxItem
+	tail *TxItem
+	size int
+}
+
 func (ins *Instance) rxSessionWritePayload(rxs *internalRxSession, extent, payloadSize int, payload []byte) error {
 	switch {
 	case rxs == nil:
@@ -319,11 +326,11 @@ func (m *Metadata) makeCANID(payloadSize int, payload []byte, local NodeID, pres
 	if m.TxKind == TxKindMessage && m.Remote.IsUnset() && m.Port <= SUBJECT_ID_MAX {
 		if local <= NODE_ID_MAX {
 			out = makeMessageSessionSpecifier(m.Port, local)
-		} else if payloadSize < presentationLayerMTU {
+		} else if payloadSize <= presentationLayerMTU {
 			c := newNodeID(payload[:payloadSize])
 			out = makeMessageSessionSpecifier(m.Port, c) | FLAG_ANONYMOUS_MESSAGE
-			if out < _CAN_EXT_ID_MASK {
-				panic("out < can_ext_id_mask TODO")
+			if out > _CAN_EXT_ID_MASK {
+				panic("spec > can_ext_id_mask TODO")
 			}
 		} else {
 			return 0, ErrInvalidArgument
@@ -373,6 +380,44 @@ func makeServiceSessionSpecifier(service PortID, kind TxKind, src, dst NodeID) (
 	return spec
 }
 
+func (q *TxQueue) pushMultiFrame(deadline microsecond, canID uint32, tid TID, pl_mtu, payloadSize int, payload []byte) (int, error) {
+	switch {
+	case len(payload) == 0 && payloadSize != 0:
+		return 0, errEmptyPayload
+	}
+	// Number of frames enqueued.
+	var out int
+	payloadSizeWithCRC := payloadSize + int(unsafe.Sizeof(CRC(0)))
+	numFrames := (payloadSizeWithCRC + pl_mtu - 1) / pl_mtu
+	if numFrames < 2 {
+		panic("unreachable: pushMultiframe used for single frame transport")
+	}
+	if q.size+numFrames > q.Cap {
+		panic("OOM: tx queue capacity cannot fit multiframe transport")
+	}
+
+	return out, nil
+}
+
+func generateMultiFrameChain(deadline microsecond, canID uint32, tid TID, pl_mtu, payloadSize int, payload []byte) txChain {
+	switch {
+	case pl_mtu <= 0:
+		panic("bad presentation layer MTU")
+	case payloadSize <= pl_mtu:
+		panic("multi frame needs smaller than MTU payload size")
+	}
+	var chain txChain
+	payloadSizeWithCRC := payloadSize + int(unsafe.Sizeof(CRC(0)))
+	// crc := newCRC().Add(payload[:payloadSize])
+	// toggle := true // initial toggle state
+	offset := 0
+	for offset < payloadSizeWithCRC {
+		chain.size++
+		// TODO
+	}
+	return chain
+}
+
 func (q *TxQueue) pushSingleFrame(deadline microsecond, canID uint32, tid TID, payloadSize int, payload []byte) error {
 	framePayloadSize := roundPayloadSizeUp(payloadSize + 1)
 	padding := framePayloadSize - payloadSize - 1
@@ -384,13 +429,13 @@ func (q *TxQueue) pushSingleFrame(deadline microsecond, canID uint32, tid TID, p
 	case padding+payloadSize+1 != framePayloadSize:
 		panic("overflow")
 	}
-	tqi := newTxItem(deadline, payloadSize, canID)
+	tqi := newTxItem(deadline, framePayloadSize, canID)
 	if payloadSize > 0 {
 		copy(tqi.payloadBuffer[:], payload[:payloadSize])
 	}
 	// Set tail byte.
 	tqi.payloadBuffer[framePayloadSize-1] = tailByte(true, true, true, tid)
-	res, err := search(&q.root, tqi.base.base, predicateTx, avlTrivialFactory)
+	res, err := search(&q.root, &tqi.base.base, predicateTx, avlTrivialFactory)
 	if err != nil {
 		return err
 	}

@@ -105,7 +105,7 @@ func TestInstanceAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = transfer
-	if sub.port != extendedCANID.PortID() {
+	if sub.port != extendedCANID.PortID() || sub.port != transfer.metadata.Port {
 		t.Error("port ID not expected", extendedCANID.PortID(), sub.port)
 	}
 	if transfer.timestamp != timeout {
@@ -114,4 +114,23 @@ func TestInstanceAccept(t *testing.T) {
 	if transfer.metadata.TxKind != TxKindMessage {
 		t.Error("txkind expected to be mesage")
 	}
+	if transfer.metadata.Remote != extendedCANID.Source() {
+		t.Error("received message metadata Remote node not match", extendedCANID.Source(), transfer.metadata.Remote)
+	}
+	if transfer.metadata.TID != 0 {
+		t.Error("expected transfer ID to be zero")
+	}
+	if transfer.payloadSize != 0 {
+		t.Error("expected payload size of 0")
+	}
+
+	const badCAN ecID = 0b100_10_0000110011_0100111_0011011
+	err = accept(0, 1e8+2, uint32(badCAN), []byte{10, 20, 30, tailByte(true, true, true, 0)})
+	if !errors.Is(err, ErrBadDstAddr) {
+		t.Error("expected error to be bad destination addr, got", err)
+	}
+}
+
+func TestInstance(t *testing.T) {
+
 }

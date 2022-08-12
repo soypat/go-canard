@@ -251,6 +251,8 @@ func avlTrivialFactory(userRef any) (node *TreeNode) {
 	switch a := userRef.(type) {
 	case *Sub:
 		node = &a.base
+	case *TreeNode:
+		node = a
 	default:
 		panic("undefined type")
 	}
