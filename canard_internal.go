@@ -406,14 +406,70 @@ func generateMultiFrameChain(deadline microsecond, canID uint32, tid TID, pl_mtu
 	case payloadSize <= pl_mtu:
 		panic("multi frame needs smaller than MTU payload size")
 	}
+	const crcSize = int(unsafe.Sizeof(CRC(0)))
+	payloadWithOffset := payload
 	var chain txChain
-	payloadSizeWithCRC := payloadSize + int(unsafe.Sizeof(CRC(0)))
-	// crc := newCRC().Add(payload[:payloadSize])
-	// toggle := true // initial toggle state
+	payloadSizeWithCRC := payloadSize + crcSize
+	crc := newCRC().Add(payload[:payloadSize])
+	toggle := true // initial toggle state
 	offset := 0
 	for offset < payloadSizeWithCRC {
+		var frameWithTailSize int
 		chain.size++
-		// TODO
+		if payloadSizeWithCRC-offset < pl_mtu {
+			frameWithTailSize = roundPayloadSizeUp(payloadSizeWithCRC - offset + 1)
+		} else {
+			frameWithTailSize = pl_mtu + 1
+		}
+		tqi := newTxItem(deadline, frameWithTailSize, canID)
+		if chain.head == nil {
+			chain.head = tqi
+		} else {
+			chain.tail.base.nextInTx = &tqi.base
+		}
+		chain.tail = tqi
+
+		// copy payload into the frame
+		framePayloadSize := frameWithTailSize - 1
+		frameOffset := 0
+		if offset < payloadSize {
+			moveSize := payloadSize - offset
+			if moveSize > framePayloadSize {
+				moveSize = framePayloadSize
+			}
+			copy(chain.tail.payloadBuffer[:], payloadWithOffset[:moveSize])
+			frameOffset += moveSize
+			offset += moveSize
+			payloadWithOffset = payloadWithOffset[moveSize:]
+		}
+		if offset < payloadSize {
+			continue // Not last frame.
+		}
+
+		// Handle the last frame of transfer. Contains padding and CRC.
+		for frameOffset+crcSize < framePayloadSize {
+			// Insert padding for last frame and include it in CRC.
+			chain.tail.payloadBuffer[frameOffset] = 0 // Padding value.
+			frameOffset++
+			crc = crc.AddByte(0)
+		}
+
+		if frameOffset < framePayloadSize && offset == payloadSize {
+			// Insert higher bits of CRC.
+			chain.tail.payloadBuffer[frameOffset] = byte(crc >> 8)
+			frameOffset++
+			offset++
+		} else if frameOffset < framePayloadSize && offset > payloadSize {
+			// Insert lower bits of CRC.
+			chain.tail.payloadBuffer[frameOffset] = byte(crc & 0xff)
+			frameOffset++
+			offset++
+		}
+		if frameOffset+1 != chain.tail.base.frame.payloadSize {
+			panic("frameOffset+1 != tail frame payloadsize")
+		}
+		chain.tail.payloadBuffer[frameOffset] = tailByte(chain.head == chain.tail, offset >= payloadSizeWithCRC, toggle, tid)
+		toggle = !toggle
 	}
 	return chain
 }
