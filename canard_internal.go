@@ -1,6 +1,9 @@
 package canard
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 type internalRxSession struct {
 	txTimestamp      microsecond
@@ -395,7 +398,28 @@ func (q *TxQueue) pushMultiFrame(deadline microsecond, canID uint32, tid TID, pl
 	if q.size+numFrames > q.Cap {
 		panic("OOM: tx queue capacity cannot fit multiframe transport")
 	}
-
+	sq := generateMultiFrameChain(deadline, canID, tid, pl_mtu, payloadSize, payload)
+	if sq.tail == nil {
+		panic("nil tail")
+	} else if sq.head == nil {
+		panic("nil head")
+	}
+	next := &sq.head.base
+	for next != nil {
+		res, err := search(&q.root, &next.base, predicateTx, avlTrivialFactory)
+		if err != nil {
+			return 0, err
+		}
+		if res != &next.base || q.root == nil {
+			panic("bad search result")
+		}
+		next = next.nextInTx
+	}
+	if numFrames != sq.size || q.size > q.Cap || sq.size > math.MaxInt32 {
+		panic("unexpected result in multi frame transfer")
+	}
+	q.size += sq.size
+	out = sq.size
 	return out, nil
 }
 
@@ -442,29 +466,30 @@ func generateMultiFrameChain(deadline microsecond, canID uint32, tid TID, pl_mtu
 			offset += moveSize
 			payloadWithOffset = payloadWithOffset[moveSize:]
 		}
-		if offset < payloadSize {
-			continue // Not last frame.
+
+		if offset >= payloadSize {
+			// Handle the last frame of transfer. Contains padding and CRC.
+			for frameOffset+crcSize < framePayloadSize {
+				// Insert padding for last frame and include it in CRC.
+				chain.tail.payloadBuffer[frameOffset] = 0 // Padding value.
+				frameOffset++
+				crc = crc.AddByte(0)
+			}
+
+			if frameOffset < framePayloadSize && offset == payloadSize {
+				// Insert higher bits of CRC.
+				chain.tail.payloadBuffer[frameOffset] = byte(crc >> 8)
+				frameOffset++
+				offset++
+			}
+			if frameOffset < framePayloadSize && offset > payloadSize {
+				// Insert lower bits of CRC.
+				chain.tail.payloadBuffer[frameOffset] = byte(crc & 0xff)
+				frameOffset++
+				offset++
+			}
 		}
 
-		// Handle the last frame of transfer. Contains padding and CRC.
-		for frameOffset+crcSize < framePayloadSize {
-			// Insert padding for last frame and include it in CRC.
-			chain.tail.payloadBuffer[frameOffset] = 0 // Padding value.
-			frameOffset++
-			crc = crc.AddByte(0)
-		}
-
-		if frameOffset < framePayloadSize && offset == payloadSize {
-			// Insert higher bits of CRC.
-			chain.tail.payloadBuffer[frameOffset] = byte(crc >> 8)
-			frameOffset++
-			offset++
-		} else if frameOffset < framePayloadSize && offset > payloadSize {
-			// Insert lower bits of CRC.
-			chain.tail.payloadBuffer[frameOffset] = byte(crc & 0xff)
-			frameOffset++
-			offset++
-		}
 		if frameOffset+1 != chain.tail.base.frame.payloadSize {
 			panic("frameOffset+1 != tail frame payloadsize")
 		}
@@ -518,7 +543,11 @@ func tailByte(start, end, toggle bool, tid TID) (tail byte) {
 }
 
 func predicateTx(userRef any, node *TreeNode) int8 {
-	target := userRef.(*TxQueueItem)
+	target, ok := userRef.(*TxQueueItem)
+	if !ok {
+		targetNode := userRef.(*TreeNode)
+		target = (*TxQueueItem)(unsafe.Pointer(targetNode))
+	}
 	other := (*TxQueueItem)(unsafe.Pointer(node))
 	sign := bsign(target.frame.extendedCANID >= other.frame.extendedCANID)
 	return sign

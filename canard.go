@@ -235,7 +235,8 @@ func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *Metadata, p
 		return err
 	}
 	if payloadSize > pl_mtu {
-		panic("multiframe transfer unsupported as of yet")
+		_, err := q.pushMultiFrame(txDeadline, maybeCan, metadata.TID, pl_mtu, payloadSize, payload)
+		return err
 	}
 	err = q.pushSingleFrame(txDeadline, maybeCan, metadata.TID, payloadSize, payload)
 	if err != nil {
