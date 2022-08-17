@@ -21,6 +21,15 @@ type TxItem struct {
 	payloadBuffer [_MTU]byte
 }
 
+// Tail is the last byte of the payload and contains transfer
+// control flow data such as if the transfer is a start/end frame
+// and if toggle bit is set.
+type Tail byte
+
+func (t Tail) IsToggled() bool { return t&TAIL_TOGGLE != 0 }
+func (t Tail) IsStart() bool   { return t&TAIL_START_OF_TRANSFER != 0 }
+func (t Tail) IsEnd() bool     { return t&TAIL_END_OF_TRANSFER != 0 }
+
 type TxQueue struct {
 	// The maximum number of frames this queue is allowed to contain. An attempt to push more will fail with an
 	// out-of-memory error even if the memory is not exhausted. This value can be changed by the user at any moment.
@@ -45,6 +54,13 @@ type TxQueueItem struct {
 	nextInTx *TxQueueItem
 	deadline microsecond
 	frame    Frame
+}
+
+func (t *TxQueueItem) TailByte() Tail {
+	if t.frame.payloadSize < 1 {
+		panic("empty payload")
+	}
+	return Tail(t.frame.payload[t.frame.payloadSize-1])
 }
 
 type Frame struct {
@@ -253,6 +269,8 @@ func (q *TxQueue) Peek() *TxQueueItem {
 	return (*TxQueueItem)(unsafe.Pointer(tqi))
 }
 
+// Pop removes item from the TxQueue and returns the removed item.
+// If item is nil then the first item is removed from the Queue and returned.
 func (q *TxQueue) Pop(item *TxQueueItem) *TxQueueItem {
 	if item == nil {
 		item = q.Peek()

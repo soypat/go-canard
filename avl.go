@@ -276,6 +276,13 @@ func (n *TreeNode) height(lvl int) int {
 	return max(n.lr[0].height(lvl+1), n.lr[1].height(lvl+1))
 }
 
+func (n *TreeNode) Len() (out int) {
+	n.traverse(0, func(n *TreeNode) {
+		out++
+	})
+	return out + 1
+}
+
 //go:inline
 func bsign(b bool) int8 {
 	if b {
