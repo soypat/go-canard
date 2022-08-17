@@ -89,4 +89,28 @@ func TestInstanceSingleAndMultiTx(t *testing.T) {
 	if tail2.IsStart() || !tail2.IsEnd() || tail2.IsToggled() {
 		t.Errorf("multiframe2 tail byte incorrect, got %b", tail1)
 	}
+	count := 0
+	expectedCRC := newCRC().Add(payload[:8])
+	redundantExpectedCRC := newCRC()
+	for _, b := range multi1.frame.payload[:multi1.frame.payloadSize-1] { //remove tail byte
+		redundantExpectedCRC = redundantExpectedCRC.AddByte(b)
+		if b != payload[count] {
+			t.Error("bad multiframe payload data", count, b, payload[count])
+		}
+		count++
+	}
+	for _, b := range multi2.frame.payload[:multi2.frame.payloadSize-3] { //remove tail byte+CRC
+		redundantExpectedCRC = redundantExpectedCRC.AddByte(b)
+		if b != payload[count] {
+			t.Error("bad multiframe payload data", count, b, payload[count])
+		}
+		count++
+	}
+	gotMultiCRC, err := multi2.CRC()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedCRC != gotMultiCRC || redundantExpectedCRC != gotMultiCRC {
+		t.Error("got CRC not match expected", expectedCRC, redundantExpectedCRC, gotMultiCRC)
+	}
 }

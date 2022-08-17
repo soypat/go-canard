@@ -63,6 +63,17 @@ func (t *TxQueueItem) TailByte() Tail {
 	return Tail(t.frame.payload[t.frame.payloadSize-1])
 }
 
+func (t *TxQueueItem) CRC() (CRC, error) {
+	if t.frame.payloadSize < 4 {
+		return 0, errors.New("payload too small for CRC")
+	}
+	if !t.TailByte().IsEnd() {
+		return 0, errors.New("CRC only set on End transfers")
+	}
+	return CRC(t.frame.payload[t.frame.payloadSize-3])<<8 |
+		CRC(t.frame.payload[t.frame.payloadSize-2]), nil
+}
+
 type Frame struct {
 	extendedCANID uint32
 	payloadSize   int
