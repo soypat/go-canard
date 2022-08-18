@@ -2,12 +2,11 @@ package canard
 
 import (
 	"errors"
-	"unsafe"
 )
 
 type Instance struct {
-	userRef any
-	NodeID  NodeID
+	// userRef any
+	NodeID NodeID
 	// There are 3 kinds of transfer modes.
 	rxSub [3]*TreeNode
 }
@@ -43,10 +42,10 @@ type TxQueue struct {
 	//
 	// Valid values are any valid CAN frame data length value not smaller than 8.
 	// Invalid values are treated as the nearest valid value. The default is the maximum valid value.
-	MTU     int
-	size    int
-	root    *TreeNode
-	userRef any
+	MTU  int
+	size int
+	root *TreeNode
+	// userRef any
 }
 type TxQueueItem struct {
 	// Must be first field due to use of unsafe.
@@ -108,7 +107,7 @@ type PortID uint32
 // Transfer ID
 type TID uint8
 
-/// High-level transport frame model.
+// / High-level transport frame model.
 type FrameModel struct {
 	timestamp   microsecond
 	prority     Priority
@@ -161,147 +160,87 @@ type Transfer struct {
 	payload     []byte
 }
 
-func (ins *Instance) Accept(timestamp microsecond, frame *Frame, rti uint8, outTx *Transfer, outSub *Sub) error {
-	switch {
-	case ins == nil || outTx == nil || frame == nil:
-		return ErrInvalidArgument
-	case len(frame.payload) == 0:
-		return errEmptyPayload
-	}
+// ecID represents an extended CAN ID.
+type ecID uint32
 
-	model := FrameModel{}
-	err := rxTryParseFrame(timestamp, frame, &model)
-	if err != nil {
-		return err
+func (can ecID) Priority() Priority  { return Priority(can>>offset_Priority) & priorityMask }
+func (can ecID) Source() NodeID      { return NodeID(can & NODE_ID_MAX) }
+func (can ecID) Destination() NodeID { return NodeID(can>>offset_DstNodeID) & NODE_ID_MAX }
+func (can ecID) IsMessage() bool     { return can&FLAG_SERVICE_NOT_MESSAGE == 0 }
+func (can ecID) IsRequest() bool {
+	return !can.IsMessage() && can&FLAG_REQUEST_NOT_RESPONSE != 0
+}
+func (can ecID) IsAnonymous() bool { return can&FLAG_ANONYMOUS_MESSAGE != 0 }
+func (can ecID) PortID() PortID {
+	if can.IsMessage() {
+		return PortID(can>>offset_SubjectID) & SUBJECT_ID_MAX
 	}
-	if !model.dstNode.IsUnset() && ins.NodeID != model.dstNode {
-		return ErrBadDstAddr
-	}
-	// This is the reason the function has a logarithmic time complexity of the number of subscriptions.
-	// Note also that this one of the two variable-complexity operations in the RX pipeline; the other one
-	// is memcpy(). Excepting these two cases, the entire RX pipeline contains neither loops nor recursion.
-	portCp := model.port
-	got, err := search(&ins.rxSub[model.txKind], &portCp, predicateOnPortID, nil)
-	if errors.Is(err, ErrAVLNilRoot) || errors.Is(err, ErrAVLNodeNotFound) {
-		return ErrNoMatchingSub
-	}
-	if err != nil {
-		return err
-	}
-	sub := (*Sub)(unsafe.Pointer(got))
-	if outSub != nil {
-		outSub = sub
-	}
-	if sub == nil {
-		return ErrNoMatchingSub
-	}
-	if sub.port != model.port {
-		return errors.New("TODO sub port not equal to model port")
-	}
-	return ins.rxAcceptFrame(sub, &model, rti, outTx)
+	return PortID(can>>offset_ServiceID) & SERVICE_ID_MAX
 }
 
-func (ins *Instance) Subscribe(kind TxKind, port PortID, extent int, tidTimeout microsecond, outSub *Sub) error {
+func (m *Metadata) makeCANID(payloadSize int, payload []byte, local NodeID, presentationLayerMTU int) (uint32, error) {
 	switch {
-	case outSub == nil:
-		return ErrInvalidArgument
-	case kind >= numberOfTxKinds:
-		return ErrTransferKind
-	}
-	err := ins.Unsubscribe(kind, port)
-	if err != nil {
-		return err
-	}
-	outSub.tidTimeout = tidTimeout
-	outSub.extent = extent
-	outSub.port = port
-	got, err := search(&ins.rxSub[kind], outSub, predicateOnStruct, avlTrivialFactory)
-	if err != nil {
-		return err
-	}
-	if got != &outSub.base {
-		panic("bad search result")
-	}
-	return nil
-}
-
-func (ins *Instance) Unsubscribe(kind TxKind, port PortID) error {
-	switch {
-	case kind >= numberOfTxKinds:
-		return ErrTransferKind
-	}
-	portcp := port
-	got, err := search(&ins.rxSub[kind], &portcp, predicateOnPortID, nil)
-	if errors.Is(err, ErrAVLNilRoot) || errors.Is(err, ErrAVLNodeNotFound) {
-		return nil // Node not exist, no need to remove.
-	}
-	if err != nil {
-		return err
-	}
-	sub := (*Sub)(unsafe.Pointer(got))
-	if got == nil || sub == nil {
-		return nil
-	}
-	remove(&ins.rxSub[kind], &sub.base)
-	if sub.port != port {
-		panic("bad search result")
-	}
-	return nil
-}
-
-func (q *TxQueue) Push(src NodeID, txDeadline microsecond, metadata *Metadata, payloadSize int, payload []byte) error {
-	switch {
-	case q == nil || metadata == nil:
-		return ErrInvalidArgument
+	case presentationLayerMTU <= 0:
+		return 0, ErrInvalidArgument
 	case len(payload) == 0 && payloadSize != 0:
-		return errEmptyPayload
+		return 0, errEmptyPayload
+	case len(payload) < payloadSize:
+		panic("OOM payload TODO")
 	}
-	pl_mtu := adjustPresentationLayerMTU(q.MTU)
-	maybeCan, err := metadata.makeCANID(payloadSize, payload, src, pl_mtu)
-	if err != nil {
-		return err
-	}
-	if payloadSize > pl_mtu {
-		_, err := q.pushMultiFrame(txDeadline, maybeCan, metadata.TID, pl_mtu, payloadSize, payload)
-		return err
-	}
-	err = q.pushSingleFrame(txDeadline, maybeCan, metadata.TID, payloadSize, payload)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (q *TxQueue) Peek() *TxQueueItem {
-	tqi := findExtremum(q.root, false)
-	if tqi == nil {
-		return nil
-	}
-	return (*TxQueueItem)(unsafe.Pointer(tqi))
-}
-
-// Pop removes item from the TxQueue and returns the removed item.
-// If item is nil then the first item is removed from the Queue and returned.
-func (q *TxQueue) Pop(item *TxQueueItem) *TxQueueItem {
-	if item == nil {
-		item = q.Peek()
-		if item == nil {
-			panic("attempted to pop with no items in queue")
+	var out uint32
+	if m.TxKind == TxKindMessage && m.Remote.IsUnset() && m.Port <= SUBJECT_ID_MAX {
+		if local <= NODE_ID_MAX {
+			out = makeMessageSessionSpecifier(m.Port, local)
+		} else if payloadSize <= presentationLayerMTU {
+			c := newNodeID(payload[:payloadSize])
+			out = makeMessageSessionSpecifier(m.Port, c) | FLAG_ANONYMOUS_MESSAGE
+			if out > _CAN_EXT_ID_MASK {
+				panic("spec > can_ext_id_mask TODO")
+			}
+		} else {
+			return 0, ErrInvalidArgument
 		}
+	} else if (m.TxKind == TxKindRequest || m.TxKind == TxKindResponse) && m.Remote.IsSet() && m.Port <= SERVICE_ID_MAX {
+		if !local.IsSet() {
+			return 0, ErrInvalidArgument
+		}
+		out = makeServiceSessionSpecifier(m.Port, m.TxKind, local, m.Remote)
 	}
-	remove(&q.root, &item.base)
-	q.size--
-	return item
+	if out == 0 {
+		panic("Invalid arg or undefined behaviour")
+	}
+	prio := m.Priority
+	if prio >= numOfPriorities {
+		return 0, ErrInvalidArgument
+	}
+	out |= uint32(prio) << offset_Priority
+	return out, nil
 }
 
-func (ins *Instance) GetSubs(kind TxKind) (subs []*Sub) {
-	switch {
-	case kind >= numberOfTxKinds:
-		panic("invalid kind")
+func newNodeID(data []byte) NodeID {
+	return NodeID((CRC).Add(newCRC(), data)) & NODE_ID_MAX
+}
+
+func makeMessageSessionSpecifier(subject PortID, src NodeID) uint32 {
+	if src > NODE_ID_MAX || subject > SUBJECT_ID_MAX {
+		panic("bad src or subject")
 	}
-	ins.rxSub[kind].traverse(0, func(n *TreeNode) {
-		sub := (*Sub)(unsafe.Pointer(n))
-		subs = append(subs, sub)
-	})
-	return subs
+	aux := subject | (SUBJECT_ID_MAX + 1) | ((SUBJECT_ID_MAX + 1) * 2)
+	return uint32(src) | uint32(aux<<offset_SubjectID)
+}
+
+func makeServiceSessionSpecifier(service PortID, kind TxKind, src, dst NodeID) (spec uint32) {
+	switch {
+	case kind != TxKindResponse && kind != TxKindRequest:
+		panic("kind must be response or request")
+	case !src.IsSet() || !dst.IsSet():
+		panic("src and dst must be set")
+	case service > SERVICE_ID_MAX:
+		panic("serviceID > max")
+	}
+	spec = uint32(src) | uint32(dst)<<offset_DstNodeID
+	spec |= uint32(service << offset_ServiceID)
+	spec |= uint32(b2i(kind == TxKindRequest)) << 24
+	spec |= FLAG_SERVICE_NOT_MESSAGE
+	return spec
 }

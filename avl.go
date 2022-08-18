@@ -1,5 +1,7 @@
 package canard
 
+import "unsafe"
+
 // This package defines AVL tree
 // data structure and algorithms.
 
@@ -9,6 +11,31 @@ type TreeNode struct {
 	lr [2]*TreeNode
 	// Balance factor.
 	bf int8
+}
+
+func predicateOnPortID(userRef any, node *TreeNode) int8 {
+	sought := *userRef.(*PortID)
+	other := (*Sub)(unsafe.Pointer(node)).port
+	if sought == other {
+		return 0
+	}
+	return bsign(sought > other)
+}
+
+func predicateOnStruct(userRef any, node *TreeNode) int8 {
+	port := userRef.(*Sub).port
+	return predicateOnPortID(port, node)
+}
+
+func predicateTx(userRef any, node *TreeNode) int8 {
+	target, ok := userRef.(*TxQueueItem)
+	if !ok {
+		targetNode := userRef.(*TreeNode)
+		target = (*TxQueueItem)(unsafe.Pointer(targetNode))
+	}
+	other := (*TxQueueItem)(unsafe.Pointer(node))
+	sign := bsign(target.frame.extendedCANID >= other.frame.extendedCANID)
+	return sign
 }
 
 func search(root **TreeNode, userRef any, predicate func(any, *TreeNode) int8, factory func(any) *TreeNode) (*TreeNode, error) {
@@ -136,20 +163,22 @@ func adjustBalance(x *TreeNode, increment bool) *TreeNode {
 }
 
 func rotate(x *TreeNode, r bool) {
-	if x == nil || x.lr[b2i(!r)] == nil || !(x.bf >= -1 && x.bf <= 1) {
+	posr := b2i(r)
+	negr := b2i(!r)
+	if x == nil || x.lr[negr] == nil || !(x.bf >= -1 && x.bf <= 1) {
 		panic(ErrInvalidArgument)
 	}
-	z := x.lr[b2i(!r)]
+	z := x.lr[negr]
 	if x.up != nil {
 		x.up.lr[b2i(x.up.lr[1] == x)] = z
 	}
 	z.up = x.up
 	x.up = z
-	x.lr[b2i(!r)] = z.lr[b2i(r)]
-	if x.lr[b2i(!r)] != nil {
-		x.lr[b2i(!r)].up = x
+	x.lr[negr] = z.lr[posr]
+	if x.lr[negr] != nil {
+		x.lr[negr].up = x
 	}
-	z.lr[b2i(r)] = x
+	z.lr[posr] = x
 }
 
 func findExtremum(root *TreeNode, max bool) *TreeNode {
@@ -246,7 +275,7 @@ func remove(root **TreeNode, node *TreeNode) {
 	}
 }
 
-/// Used for inserting new items into AVL trees.
+// / Used for inserting new items into AVL trees.
 func avlTrivialFactory(userRef any) (node *TreeNode) {
 	switch a := userRef.(type) {
 	case *Sub:
