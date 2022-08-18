@@ -3,10 +3,13 @@ package canard
 type TxKind uint8
 
 const (
-	TxKindMessage  TxKind = iota ///< Multicast, from publisher to all subscribers.
-	TxKindResponse               ///< Point-to-point, from server to client.
+	// Multicast, from publisher to all subscribers.
+	TxKindMessage TxKind = iota
+	// Point-to-point, from server to client.
+	TxKindResponse
+	// Point-to-point, from client to server.
 	TxKindRequest
-	numberOfTxKinds ///< Point-to-point, from client to server.
+	numberOfTxKinds
 )
 
 type Priority uint8
@@ -25,7 +28,7 @@ const (
 	priorityMask = 0b111
 )
 
-/// Parameter ranges are inclusive; the lower bound is zero for all. See Cyphal/CAN Specification for background.
+// Parameter ranges are inclusive; the lower bound is zero for all. See Cyphal/CAN Specification for background.
 const (
 	SUBJECT_ID_MAX         = 8191
 	SERVICE_ID_MAX         = 511

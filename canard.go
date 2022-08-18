@@ -28,6 +28,7 @@ type Tail byte
 func (t Tail) IsToggled() bool { return t&TAIL_TOGGLE != 0 }
 func (t Tail) IsStart() bool   { return t&TAIL_START_OF_TRANSFER != 0 }
 func (t Tail) IsEnd() bool     { return t&TAIL_END_OF_TRANSFER != 0 }
+func (t Tail) TransferID() TID { return TID(t & TRANSFER_ID_MAX) }
 
 type TxQueue struct {
 	// The maximum number of frames this queue is allowed to contain. An attempt to push more will fail with an
@@ -87,20 +88,13 @@ func (n NodeID) IsValid() bool {
 }
 
 //go:inline
-func (n NodeID) IsUnset() bool {
-	const unsetNodeID = 0xff // 255
-	return n == unsetNodeID
-}
+func (n NodeID) IsUnset() bool { return n == 0xff }
 
 //go:inline
-func (n *NodeID) Unset() {
-	*n = 0xff
-}
+func (n NodeID) IsSet() bool { return n <= NODE_ID_MAX }
 
 //go:inline
-func (n NodeID) IsSet() bool {
-	return n <= NODE_ID_MAX
-}
+func (n *NodeID) Unset() { *n = 0xff }
 
 type PortID uint32
 
@@ -165,7 +159,7 @@ type ecID uint32
 
 func (can ecID) Priority() Priority  { return Priority(can>>offset_Priority) & priorityMask }
 func (can ecID) Source() NodeID      { return NodeID(can & NODE_ID_MAX) }
-func (can ecID) Destination() NodeID { return NodeID(can>>offset_DstNodeID) & NODE_ID_MAX }
+func (can ecID) Destination() NodeID { return NodeID((can >> offset_DstNodeID) & NODE_ID_MAX) }
 func (can ecID) IsMessage() bool     { return can&FLAG_SERVICE_NOT_MESSAGE == 0 }
 func (can ecID) IsRequest() bool {
 	return !can.IsMessage() && can&FLAG_REQUEST_NOT_RESPONSE != 0
