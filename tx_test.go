@@ -87,7 +87,7 @@ func TestInstanceSingleAndMultiTx(t *testing.T) {
 	}
 	tail2 := multi2.TailByte()
 	if tail2.IsStart() || !tail2.IsEnd() || tail2.IsToggled() {
-		t.Errorf("multiframe2 tail byte incorrect, got %b", tail1)
+		t.Errorf("multiframe2 tail byte incorrect, got %b", tail2)
 	}
 	count := 0
 	expectedCRC := newCRC().Add(payload[:8])
